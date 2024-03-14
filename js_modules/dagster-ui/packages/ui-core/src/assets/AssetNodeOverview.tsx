@@ -102,11 +102,40 @@ export const AssetNodeOverview = ({
     return <AssetNodeOverviewLoading />;
   }
 
-  let tableSchema = materialization?.metadataEntries.find(isCanonicalTableSchemaEntry);
-  let tableSchemaLoadTimestamp = materialization ? Number(materialization.timestamp) : undefined;
-  if (!tableSchema) {
-    tableSchema = assetNode?.metadataEntries.find(isCanonicalTableSchemaEntry);
-    tableSchemaLoadTimestamp = assetNodeLoadTimestamp;
+  const materializationTableSchema = materialization?.metadataEntries.find(
+    isCanonicalTableSchemaEntry,
+  );
+  const materializationTableSchemaLoadTimestamp = materialization
+    ? Number(materialization.timestamp)
+    : undefined;
+  const definitionTableSchema = assetNode?.metadataEntries.find(isCanonicalTableSchemaEntry);
+  const definitionTableSchemaLoadTimestamp = assetNodeLoadTimestamp;
+
+  let tableSchema = materializationTableSchema ?? definitionTableSchema;
+  const tableSchemaLoadTimestamp =
+    materializationTableSchemaLoadTimestamp ?? definitionTableSchemaLoadTimestamp;
+
+  // Merge the descriptions from the definition table schema with the materialization table schema
+  if (materializationTableSchema && definitionTableSchema) {
+    const definitionTableSchemaColumnDescriptionsByName =
+      definitionTableSchema.schema.columns.reduce(
+        (accum, tableColumn) => {
+          const name = tableColumn.name;
+          const description = tableColumn.description;
+
+          return name && description ? {...accum, [name]: description} : accum;
+        },
+        {} as {[name: string]: string},
+      );
+    const mergedColumns = materializationTableSchema.schema.columns.map((column) => {
+      const description = definitionTableSchemaColumnDescriptionsByName[column.name];
+      return description ? {...column, description} : column;
+    });
+
+    tableSchema = {
+      ...materializationTableSchema,
+      schema: {...materializationTableSchema.schema, columns: mergedColumns},
+    };
   }
 
   const renderStatusSection = () => (
