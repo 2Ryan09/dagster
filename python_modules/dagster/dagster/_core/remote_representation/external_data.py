@@ -47,6 +47,7 @@ from dagster._core.definitions import (
     ScheduleDefinition,
 )
 from dagster._core.definitions.asset_check_spec import AssetCheckKey
+from dagster._core.definitions.asset_graph import AssetGraph
 from dagster._core.definitions.asset_sensor_definition import AssetSensorDefinition
 from dagster._core.definitions.asset_spec import (
     SYSTEM_METADATA_KEY_ASSET_EXECUTION_TYPE,
@@ -1585,6 +1586,8 @@ def external_asset_nodes_from_defs(
     is_observable_by_key: Dict[AssetKey, bool] = {}
     auto_observe_interval_minutes_by_key: Dict[AssetKey, Optional[Union[int, float]]] = {}
 
+    asset_graph = AssetGraph.from_assets(assets_defs)
+
     for job_def in job_defs:
         asset_layer = job_def.asset_layer
         asset_info_by_node_output = asset_layer.asset_info_by_node_output_handle
@@ -1739,11 +1742,25 @@ def external_asset_nodes_from_defs(
                 else group_name_by_asset_key.get(key, DEFAULT_GROUP_NAME)
             )
 
+            # These are not part of a job, so dependencies are not pre-calculated
+            node = asset_graph.get(key)
+            dependencies = [
+                ExternalAssetDependency(
+                    upstream_asset_key=parent_key,
+                    partition_mapping=asset_graph.get_partition_mapping(key, parent_key),
+                )
+                for parent_key in node.parent_keys
+            ]
+            depended_by = [
+                ExternalAssetDependedBy(downstream_asset_key=child_key)
+                for child_key in node.child_keys
+            ]
+
             asset_nodes.append(
                 ExternalAssetNode(
                     asset_key=key,
-                    dependencies=list(deps[key].values()),
-                    depended_by=list(dep_by[key].values()),
+                    dependencies=dependencies,
+                    depended_by=depended_by,
                     execution_type=asset.execution_type,
                     job_names=[],
                     op_description=asset.descriptions_by_key.get(key),

@@ -1314,15 +1314,47 @@ def test_external_time_window_valid_partition_key():
 
 
 def test_external_assets_def_to_external_asset_graph() -> None:
-    asset_one = next(iter(external_assets_from_specs([AssetSpec("asset_one")])))
-
-    assets_job = define_asset_job("assets_job", [asset_one])
-    external_asset_nodes = _get_external_asset_nodes_from_definitions(
-        Definitions(assets=[asset_one], jobs=[assets_job])
+    asset_one, asset_two = external_assets_from_specs(
+        [AssetSpec("asset_one"), AssetSpec("asset_two", deps=["asset_one"])]
     )
 
-    assert len(external_asset_nodes) == 1
-    assert next(iter(external_asset_nodes)).is_executable is False
+    external_asset_nodes = sorted(
+        _get_external_asset_nodes_from_definitions(Definitions(assets=[asset_one, asset_two])),
+        key=lambda n: n.asset_key,
+    )
+
+    assert len(external_asset_nodes) == 2
+
+    assert external_asset_nodes == [
+        ExternalAssetNode(
+            asset_key=AssetKey(["asset_one"]),
+            dependencies=[],
+            depended_by=[ExternalAssetDependedBy(downstream_asset_key=AssetKey("asset_two"))],
+            execution_type=AssetExecutionType.UNEXECUTABLE,
+            op_name="abc__asset1",
+            node_definition_name="abc__asset1",
+            graph_name=None,
+            op_names=["abc__asset1"],
+            # op_description=None,
+            # job_names=[],
+            output_name="result",
+            group_name=DEFAULT_GROUP_NAME,
+        ),
+        ExternalAssetNode(
+            asset_key=AssetKey("asset_two"),
+            dependencies=[ExternalAssetDependency(upstream_asset_key=AssetKey(["abc", "asset1"]))],
+            depended_by=[],
+            execution_type=AssetExecutionType.MATERIALIZATION,
+            op_name="asset2",
+            node_definition_name="asset2",
+            graph_name=None,
+            op_names=["asset2"],
+            # op_description=None,
+            # job_names=["__ASSET_JOB", "assets_job"],
+            output_name="result",
+            group_name=DEFAULT_GROUP_NAME,
+        ),
+    ]
 
 
 def test_historical_external_asset_node_that_models_underlying_external_assets_def() -> None:
