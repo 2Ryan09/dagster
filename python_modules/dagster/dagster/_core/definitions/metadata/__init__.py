@@ -1,7 +1,6 @@
 import os
 from abc import ABC, abstractmethod
 from typing import (
-    TYPE_CHECKING,
     AbstractSet,
     Any,
     Callable,
@@ -15,13 +14,16 @@ from typing import (
     Type,
     Union,
     cast,
+    get_args,
 )
 
+from pydantic import BaseModel
 from typing_extensions import Self, TypeAlias, TypeVar
 
 import dagster._check as check
 import dagster._seven as seven
 from dagster._annotations import PublicAttr, deprecated, deprecated_param, experimental, public
+from dagster._core.definitions.asset_key import AssetKey
 from dagster._core.errors import DagsterInvalidMetadata
 from dagster._serdes import whitelist_for_serdes
 from dagster._serdes.serdes import (
@@ -39,20 +41,18 @@ from dagster._utils.warnings import (
 from .table import (  # re-exported
     TableColumn as TableColumn,
     TableColumnConstraints as TableColumnConstraints,
+    TableColumnLineages as TableColumnLineages,
     TableConstraints as TableConstraints,
     TableRecord as TableRecord,
     TableSchema as TableSchema,
 )
-
-if TYPE_CHECKING:
-    from dagster._core.definitions.events import AssetKey
 
 ArbitraryMetadataMapping: TypeAlias = Mapping[str, Any]
 
 RawMetadataValue = Union[
     "MetadataValue",
     TableSchema,
-    "AssetKey",
+    AssetKey,
     os.PathLike,
     Dict[Any, Any],
     float,
@@ -106,9 +106,11 @@ def normalize_metadata(
     return normalized_metadata
 
 
-def normalize_metadata_value(raw_value: RawMetadataValue) -> "MetadataValue[Any]":
-    from dagster._core.definitions.events import AssetKey
+def has_corresponding_metadata_value_class(obj: Any) -> bool:
+    return isinstance(obj, (str, float, bool, int, list, dict, os.PathLike, AssetKey, TableSchema))
 
+
+def normalize_metadata_value(raw_value: RawMetadataValue) -> "MetadataValue[Any]":
     if isinstance(raw_value, MetadataValue):
         return raw_value
     elif isinstance(raw_value, str):
@@ -1173,7 +1175,18 @@ class NamespacedMetadataEntries(ABC, BaseModel, frozen=True):
 
     def __getitem__(self, key: str) -> Any:
         # getattr returns the pydantic property on the subclass
-        return getattr(self, self._strip_namespace_from_key(key))
+        value = getattr(self, self._strip_namespace_from_key(key))
+        if has_corresponding_metadata_value_class(value):
+            return value
+        elif isinstance(value, BaseModel):
+            return JsonMetadataValue(data=value.dict())
+        else:
+            raise DagsterInvalidMetadata("fdsjkfdls")
+
+    @classmethod
+    def _get_type_for_key(cls, key: str) -> Type:
+        annotation = cls.__fields__[key].annotation
+        return get_args(annotation)[0]
 
     @classmethod
     def extract(
@@ -1185,7 +1198,16 @@ class NamespacedMetadataEntries(ABC, BaseModel, frozen=True):
             if len(splits) == 2:
                 namespace, key = splits
                 if namespace == cls.namespace() and key in cls.__fields__:
-                    kwargs[key] = value.value if isinstance(value, MetadataValue) else value
+                    if isinstance(value, JsonMetadataValue):
+                        value_class = cls._get_type_for_key(key)
+                        if issubclass(value_class, BaseModel):
+                            kwargs[key] = value_class.parse_obj(value.data)
+                        else:
+                            kwargs[key] = value.data
+                    elif isinstance(value, MetadataValue):
+                        kwargs[key] = value.value
+                    else:
+                        kwargs[key] = value
 
         return cls(**kwargs)
 
@@ -1199,6 +1221,7 @@ class TableMetadataEntries(NamespacedMetadataEntries, frozen=True):
     """
 
     column_schema: Optional[TableSchema] = None
+    column_lineages: Optional[TableColumnLineages] = None
 
     @classmethod
     def namespace(cls) -> str:

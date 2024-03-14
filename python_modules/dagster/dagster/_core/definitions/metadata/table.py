@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 import dagster._check as check
 from dagster._annotations import PublicAttr, experimental, public
-from dagster._core.events import AssetKey
+from dagster._core.definitions.asset_key import AssetKey
 from dagster._serdes.serdes import (
     whitelist_for_serdes,
 )
